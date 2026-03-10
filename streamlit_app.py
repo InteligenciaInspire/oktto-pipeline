@@ -6,7 +6,7 @@ import streamlit as st
 
 EXPECTED_PYTHON = (3, 12)
 SUPPORTED_MIN_PYTHON = (3, 12)
-SUPPORTED_MAX_PYTHON = (3, 14)
+SUPPORTED_MAX_PYTHON = (3, 15)
 
 
 def _log_boot_diagnostics() -> None:
@@ -26,9 +26,9 @@ def _validate_runtime() -> None:
     if not (SUPPORTED_MIN_PYTHON <= current < SUPPORTED_MAX_PYTHON):
         st.error("Runtime Python nao suportado para este deploy.")
         st.code(
-            "Repositorio validado em Python 3.12.\n"
+            "Repositorio validado em Python 3.12 e testado para runtimes 3.12 a 3.14.\n"
             f"Runtime detectado: {current_label}\n\n"
-            "No Streamlit Community Cloud, recrie o app e selecione Python 3.12 em Advanced settings."
+            "Se o deploy estiver em uma versao fora desse intervalo, ajuste o ambiente do app no Streamlit Cloud."
         )
         st.stop()
 
