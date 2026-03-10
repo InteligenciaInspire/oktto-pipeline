@@ -211,88 +211,77 @@ def _public_extract(dataset: str, base_url: str, token: str, page_size: int) -> 
     return _normalize_dataset(dataset, items)
 
 
+DATASET_LABELS: dict[str, str] = {
+    "leads": "Leads",
+    "sales": "Vendas",
+    "users": "Usuarios",
+    "teams": "Equipes",
+    "funnels": "Funis",
+    "additional_fields": "Campos adicionais",
+}
+
+JOB_LABELS: dict[str, str] = {
+    "sync_dimensions": "Dimensoes — funis, etapas, usuarios, equipes",
+    "sync_leads": "Leads — todos os leads",
+    "sync_sales": "Vendas — todas as vendas",
+    "sync_full": "Completo — tudo + view comercial",
+}
+
+
+def _token_input() -> str:
+    """Single token field persisted in session state across reruns."""
+    token = st.text_input(
+        "Token da Oktto",
+        value=st.session_state.get("oktto_token", ""),
+        type="password",
+        placeholder="Cole aqui o token da API Oktto",
+        help="Encontrado em Configuracoes › Integracoes › API dentro da sua conta Oktto.",
+        key="_token_widget",
+    )
+    st.session_state["oktto_token"] = token
+    return token.strip()
+
+
 def _how_it_works() -> None:
-    with st.expander("Como funciona?", expanded=False):
+    with st.expander("ℹ️ Como funciona?", expanded=False):
         st.markdown(
             """
-**O que e este app?**
+Este app conecta ao seu **CRM Oktto** e extrai dados comerciais.
+Voce pode **baixar como CSV** ou **enviar direto para o Google Sheets**.
 
-Conecta sua conta da **Oktto CRM** e extrai dados comerciais — leads, vendas, usuarios, funis e mais.
-Voce pode baixar os dados como **CSV** ou enviar diretamente para o seu **Google Sheets**.
+**O que voce precisa:**
+- **Token da Oktto** — em _Configuracoes › Integracoes › API_ na sua conta Oktto
+- **Spreadsheet ID** _(so para enviar ao Sheets)_ — trecho da URL entre `/d/` e `/edit`
 
----
+**Dados disponíveis:** Leads · Vendas · Usuarios · Equipes · Funis · Campos adicionais
 
-**O que voce precisa?**
-
-- **Token da Oktto** — encontrado em _Configuracoes > Integracoes > API_ dentro da sua conta Oktto.
-- **Spreadsheet ID** (opcional, so para enviar ao Sheets) — e o trecho da URL da planilha entre `/d/` e `/edit`. Exemplo:
-  `https://docs.google.com/spreadsheets/d/**SEU_ID_AQUI**/edit`
-
----
-
-**Opcao 1 — Baixar CSV**
-
-1. Informe seu token da Oktto
-2. Escolha o dataset (leads, vendas, usuarios...)
-3. Clique em **Extrair** e depois em **Baixar CSV**
-
----
-
-**Opcao 2 — Enviar para Google Sheets**
-
-1. Faca login com sua conta Google (botao abaixo)
-2. Informe seu token da Oktto e o ID da planilha de destino
-3. Escolha o job e clique em **Executar e enviar para Sheets**
-
-Os dados serao escritos em abas separadas dentro da sua planilha.
 Nenhum token ou dado seu e salvo neste servidor.
-
----
-
-**Jobs disponiveis**
-
-| Job | O que faz |
-|---|---|
-| `sync_dimensions` | Funis, etapas, usuarios, equipes e campos adicionais |
-| `sync_leads` | Todos os leads com campos normalizados |
-| `sync_sales` | Todas as vendas com campos normalizados |
-| `sync_full` | Tudo acima + view comercial resumida |
 """
         )
 
 
-def _section_extract_csv(defaults: dict[str, str]) -> None:
-    st.subheader("Extrair dados para CSV")
+def _section_extract_csv(token: str, defaults: dict[str, str]) -> None:
+    dataset = st.selectbox(
+        "Que dados voce quer extrair?",
+        options=list(DATASET_EXTRACTORS.keys()),
+        format_func=lambda x: DATASET_LABELS.get(x, x),
+    )
 
-    with st.form("extract_form"):
-        base_url = st.text_input("Oktto Base URL", value=defaults["OKTTO_API_BASE_URL"])
-        token = st.text_input("Token da Oktto", type="password", help="Configuracoes > Integracoes > API na sua conta Oktto")
-        dataset = st.selectbox(
-            "Dataset",
-            options=list(DATASET_EXTRACTORS.keys()),
-            format_func=lambda x: {
-                "leads": "Leads",
-                "sales": "Vendas",
-                "users": "Usuarios",
-                "teams": "Equipes",
-                "funnels": "Funis",
-                "additional_fields": "Campos adicionais",
-            }.get(x, x),
-        )
+    with st.expander("Opcoes avancadas", expanded=False):
+        base_url = st.text_input("Oktto Base URL", value=defaults["OKTTO_API_BASE_URL"], key="csv_base")
         page_size = st.number_input("Itens por pagina", min_value=10, max_value=500, value=100, step=10)
-        submit = st.form_submit_button("Extrair", use_container_width=True, type="primary")
 
-    if submit:
-        if not token.strip():
-            st.error("Informe o token da Oktto para extrair.")
+    if st.button("⬇️ Extrair", use_container_width=True, type="primary", key="btn_extract"):
+        if not token:
+            st.error("Informe seu token da Oktto no campo acima.")
             return
         try:
             with st.spinner("Extraindo dados..."):
-                df = _public_extract(dataset, base_url.strip(), token.strip(), int(page_size))
-            st.success(f"Extracao concluida — {len(df)} linhas")
+                df = _public_extract(dataset, base_url, token, int(page_size))
+            st.success(f"{len(df)} registros extraídos")
             st.dataframe(df.head(200), use_container_width=True)
             st.download_button(
-                label="Baixar CSV",
+                label="⬇️ Baixar CSV",
                 data=df.to_csv(index=False).encode("utf-8"),
                 file_name=f"oktto_{dataset}.csv",
                 mime="text/csv",
@@ -302,50 +291,128 @@ def _section_extract_csv(defaults: dict[str, str]) -> None:
             st.error(f"Falha na extracao: {exc}")
 
 
-def _section_send_to_sheets(defaults: dict[str, str]) -> None:
-    st.subheader("Enviar para Google Sheets")
+def _oauth_login_panel(defaults: dict[str, str]) -> None:
+    if not _google_oauth_available():
+        st.warning("Login Google indisponivel neste deploy.")
+        return
 
+    # If credentials are pre-configured (in st.secrets), skip the input fields
+    client_id = defaults["GOOGLE_OAUTH_CLIENT_ID"]
+    client_secret = defaults["GOOGLE_OAUTH_CLIENT_SECRET"]
+    redirect_uri = defaults["GOOGLE_OAUTH_REDIRECT_URI"]
+
+    if not client_id or not client_secret or not redirect_uri:
+        with st.expander("Configurar credenciais OAuth Google", expanded=True):
+            st.caption("Preencha os campos abaixo para habilitar o login com Google.")
+            client_id = st.text_input("Google OAuth Client ID", type="password", key="oa_cid").strip()
+            client_secret = st.text_input("Google OAuth Client Secret", type="password", key="oa_cs").strip()
+            redirect_uri = st.text_input(
+                "Redirect URI",
+                placeholder="https://elt-oktto.streamlit.app",
+                key="oa_ru",
+                help="URL exata deste app — deve estar cadastrada no Google Cloud Console.",
+            ).strip()
+
+    if not client_id or not client_secret or not redirect_uri:
+        return
+
+    query_params = st.query_params
+    code = query_params.get("code")
+    state_in_url = query_params.get("state")
+
+    if "google_user_creds" not in st.session_state:
+        flow = Flow.from_client_config(
+            _oauth_client_config(client_id, client_secret, redirect_uri),
+            scopes=OAUTH_SCOPES,
+        )
+        flow.redirect_uri = redirect_uri
+        authorization_url, state = flow.authorization_url(
+            access_type="offline",
+            include_granted_scopes="true",
+            prompt="consent",
+        )
+        st.session_state["oauth_state"] = state
+        st.link_button("🔑 Entrar com Google", authorization_url, use_container_width=True)
+
+    if code and "google_user_creds" not in st.session_state:
+        try:
+            flow = Flow.from_client_config(
+                _oauth_client_config(client_id, client_secret, redirect_uri),
+                scopes=OAUTH_SCOPES,
+                state=st.session_state.get("oauth_state") or state_in_url,
+            )
+            flow.redirect_uri = redirect_uri
+            flow.fetch_token(code=code)
+            creds = flow.credentials
+            st.session_state["google_user_creds"] = {
+                "token": creds.token,
+                "refresh_token": creds.refresh_token,
+                "token_uri": creds.token_uri,
+                "client_id": creds.client_id,
+                "client_secret": creds.client_secret,
+                "scopes": creds.scopes,
+            }
+            st.query_params.clear()
+            st.success("Login Google concluido.")
+        except Exception as exc:
+            st.error(f"Falha no login Google: {exc}")
+
+    if "google_user_creds" in st.session_state:
+        st.success("✅ Google conectado")
+        if st.button("Desconectar Google", key="btn_disconnect"):
+            st.session_state.pop("google_user_creds", None)
+            st.session_state.pop("oauth_state", None)
+            st.rerun()
+
+
+def _section_send_to_sheets(token: str, defaults: dict[str, str]) -> None:
     _oauth_login_panel(defaults)
+
+    if "google_user_creds" not in st.session_state:
+        return
 
     st.divider()
 
-    with st.form("sheets_form"):
-        base_url = st.text_input("Oktto Base URL", value=defaults["OKTTO_API_BASE_URL"], key="sh_base")
-        token = st.text_input("Token da Oktto", type="password", key="sh_token")
-        spreadsheet_id = st.text_input(
-            "Spreadsheet ID de destino",
-            key="sh_id",
-            help="Trecho da URL da planilha entre /d/ e /edit",
-        )
-        job_labels = {
-            "sync_dimensions": "sync_dimensions — funis, etapas, usuarios, equipes",
-            "sync_leads": "sync_leads — leads",
-            "sync_sales": "sync_sales — vendas",
-            "sync_full": "sync_full — tudo + view comercial",
-        }
-        selected_job = st.selectbox(
-            "Job",
-            options=list(JOBS.keys()),
-            format_func=lambda x: job_labels.get(x, x),
-            key="sh_job",
-        )
-        send = st.form_submit_button("Executar e enviar para Sheets", use_container_width=True, type="primary")
+    spreadsheet_url_or_id = st.text_input(
+        "URL ou ID da planilha de destino",
+        placeholder="https://docs.google.com/spreadsheets/d/SEU_ID/edit  ou  cole o ID direto",
+        help="Cole a URL completa da planilha ou apenas o ID (trecho entre /d/ e /edit).",
+        key="sh_url",
+    ).strip()
 
-    if send:
-        if not token.strip():
-            st.error("Informe seu token Oktto.")
-        elif not spreadsheet_id.strip():
-            st.error("Informe o Spreadsheet ID.")
+    # Accept full URL or bare ID
+    spreadsheet_id = spreadsheet_url_or_id
+    if "/spreadsheets/d/" in spreadsheet_url_or_id:
+        try:
+            spreadsheet_id = spreadsheet_url_or_id.split("/spreadsheets/d/")[1].split("/")[0]
+        except IndexError:
+            pass
+
+    selected_job = st.selectbox(
+        "O que voce quer sincronizar?",
+        options=list(JOBS.keys()),
+        format_func=lambda x: JOB_LABELS.get(x, x),
+        key="sh_job",
+    )
+
+    with st.expander("Opcoes avancadas", expanded=False):
+        base_url = st.text_input("Oktto Base URL", value=defaults["OKTTO_API_BASE_URL"], key="sh_base")
+
+    if st.button("📤 Enviar para Sheets", use_container_width=True, type="primary", key="btn_sheets"):
+        if not token:
+            st.error("Informe seu token da Oktto no campo acima.")
+        elif not spreadsheet_id:
+            st.error("Informe a URL ou ID da planilha.")
         else:
             try:
-                with st.spinner("Executando job e escrevendo no Sheets..."):
+                with st.spinner("Sincronizando dados com o Google Sheets..."):
                     _run_public_job_to_user_sheets(
                         job_name=selected_job,
-                        oktto_base_url=base_url.strip(),
-                        oktto_token=token.strip(),
-                        spreadsheet_id=spreadsheet_id.strip(),
+                        oktto_base_url=base_url,
+                        oktto_token=token,
+                        spreadsheet_id=spreadsheet_id,
                     )
-                st.success(f"Concluido! Job '{selected_job}' enviado para a planilha.")
+                st.success(f"✅ Concluido! Dados enviados para a planilha.")
             except Exception as exc:
                 st.error(f"Falha: {exc}")
 
@@ -357,17 +424,19 @@ def main() -> None:
 
     _how_it_works()
 
-    defaults = _load_env_defaults()
-
     st.divider()
+
+    token = _token_input()
+
+    defaults = _load_env_defaults()
 
     tab_csv, tab_sheets = st.tabs(["📥 Extrair CSV", "📤 Enviar para Google Sheets"])
 
     with tab_csv:
-        _section_extract_csv(defaults)
+        _section_extract_csv(token, defaults)
 
     with tab_sheets:
-        _section_send_to_sheets(defaults)
+        _section_send_to_sheets(token, defaults)
 
 
 if __name__ == "__main__":
