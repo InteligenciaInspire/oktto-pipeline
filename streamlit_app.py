@@ -1,3 +1,9 @@
-from src.ui.app import main
+import streamlit as st
 
-main()
+try:
+    from src.ui.app import main
+    main()
+except Exception as e:
+    st.error(f"Erro ao iniciar o app: {e}")
+    import traceback
+    st.code(traceback.format_exc())
