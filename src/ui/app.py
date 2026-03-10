@@ -110,83 +110,6 @@ def _make_user_credentials(payload: dict) -> UserCredentials:
     )
 
 
-def _oauth_login_panel(defaults: dict[str, str]) -> None:
-    st.markdown("#### Login Google (OAuth)")
-
-    if not _google_oauth_available():
-        st.warning("Login Google indisponivel neste deploy. O modo de extracao CSV continua funcionando.")
-        return
-
-    client_id = st.text_input(
-        "Google OAuth Client ID",
-        value=defaults["GOOGLE_OAUTH_CLIENT_ID"],
-        type="password",
-        help="Pode ser fixo no .env da aplicacao ou informado aqui.",
-    ).strip()
-    client_secret = st.text_input(
-        "Google OAuth Client Secret",
-        value=defaults["GOOGLE_OAUTH_CLIENT_SECRET"],
-        type="password",
-    ).strip()
-    redirect_uri = st.text_input(
-        "Google OAuth Redirect URI",
-        value=defaults["GOOGLE_OAUTH_REDIRECT_URI"],
-        help="Exemplo Streamlit Cloud: https://seu-app.streamlit.app",
-    ).strip()
-
-    if not client_id or not client_secret or not redirect_uri:
-        st.warning("Preencha Client ID, Client Secret e Redirect URI para habilitar login Google.")
-        return
-
-    query_params = st.query_params
-    code = query_params.get("code")
-    state_in_url = query_params.get("state")
-
-    if "google_user_creds" not in st.session_state:
-        flow = Flow.from_client_config(
-            _oauth_client_config(client_id, client_secret, redirect_uri),
-            scopes=OAUTH_SCOPES,
-        )
-        flow.redirect_uri = redirect_uri
-        authorization_url, state = flow.authorization_url(
-            access_type="offline",
-            include_granted_scopes="true",
-            prompt="consent",
-        )
-        st.session_state["oauth_state"] = state
-        st.link_button("Entrar com Google", authorization_url, use_container_width=True)
-
-    if code and "google_user_creds" not in st.session_state:
-        try:
-            flow = Flow.from_client_config(
-                _oauth_client_config(client_id, client_secret, redirect_uri),
-                scopes=OAUTH_SCOPES,
-                state=st.session_state.get("oauth_state") or state_in_url,
-            )
-            flow.redirect_uri = redirect_uri
-            flow.fetch_token(code=code)
-            creds = flow.credentials
-            st.session_state["google_user_creds"] = {
-                "token": creds.token,
-                "refresh_token": creds.refresh_token,
-                "token_uri": creds.token_uri,
-                "client_id": creds.client_id,
-                "client_secret": creds.client_secret,
-                "scopes": creds.scopes,
-            }
-            st.query_params.clear()
-            st.success("Login Google concluido para esta sessao.")
-        except Exception as exc:
-            st.error(f"Falha no login Google: {exc}")
-
-    if "google_user_creds" in st.session_state:
-        st.success("Google conectado na sessao atual.")
-        if st.button("Desconectar Google", use_container_width=True):
-            st.session_state.pop("google_user_creds", None)
-            st.session_state.pop("oauth_state", None)
-            st.info("Sessao Google removida.")
-
-
 def _run_public_job_to_user_sheets(
     job_name: str,
     oktto_base_url: str,
@@ -296,7 +219,6 @@ def _oauth_login_panel(defaults: dict[str, str]) -> None:
         st.warning("Login Google indisponivel neste deploy.")
         return
 
-    # If credentials are pre-configured (in st.secrets), skip the input fields
     client_id = defaults["GOOGLE_OAUTH_CLIENT_ID"]
     client_secret = defaults["GOOGLE_OAUTH_CLIENT_SECRET"]
     redirect_uri = defaults["GOOGLE_OAUTH_REDIRECT_URI"]
@@ -316,25 +238,22 @@ def _oauth_login_panel(defaults: dict[str, str]) -> None:
     if not client_id or not client_secret or not redirect_uri:
         return
 
-    query_params = st.query_params
-    code = query_params.get("code")
-    state_in_url = query_params.get("state")
+    # Already logged in – show status and disconnect button
+    if "google_user_creds" in st.session_state:
+        st.success("✅ Google conectado")
+        if st.button("Desconectar Google", key="btn_disconnect"):
+            for k in ("google_user_creds", "oauth_state", "oauth_code_used"):
+                st.session_state.pop(k, None)
+            st.query_params.clear()
+            st.rerun()
+        return
 
-    if "google_user_creds" not in st.session_state:
-        flow = Flow.from_client_config(
-            _oauth_client_config(client_id, client_secret, redirect_uri),
-            scopes=OAUTH_SCOPES,
-        )
-        flow.redirect_uri = redirect_uri
-        authorization_url, state = flow.authorization_url(
-            access_type="offline",
-            include_granted_scopes="true",
-            prompt="consent",
-        )
-        st.session_state["oauth_state"] = state
-        st.link_button("🔑 Entrar com Google", authorization_url, use_container_width=True)
+    code = st.query_params.get("code")
+    state_in_url = st.query_params.get("state")
 
-    if code and "google_user_creds" not in st.session_state:
+    # Handle OAuth callback: exchange code exactly once
+    if code and not st.session_state.get("oauth_code_used"):
+        st.session_state["oauth_code_used"] = True
         try:
             flow = Flow.from_client_config(
                 _oauth_client_config(client_id, client_secret, redirect_uri),
@@ -350,19 +269,30 @@ def _oauth_login_panel(defaults: dict[str, str]) -> None:
                 "token_uri": creds.token_uri,
                 "client_id": creds.client_id,
                 "client_secret": creds.client_secret,
-                "scopes": creds.scopes,
+                "scopes": list(creds.scopes) if creds.scopes else [],
             }
             st.query_params.clear()
-            st.success("Login Google concluido.")
-        except Exception as exc:
-            st.error(f"Falha no login Google: {exc}")
-
-    if "google_user_creds" in st.session_state:
-        st.success("✅ Google conectado")
-        if st.button("Desconectar Google", key="btn_disconnect"):
-            st.session_state.pop("google_user_creds", None)
-            st.session_state.pop("oauth_state", None)
             st.rerun()
+        except Exception as exc:
+            st.session_state.pop("oauth_code_used", None)
+            st.query_params.clear()
+            st.error(f"Falha no login Google: {exc}. Tente novamente.")
+        return
+
+    # Show login button (only when no pending code in URL)
+    if not code:
+        flow = Flow.from_client_config(
+            _oauth_client_config(client_id, client_secret, redirect_uri),
+            scopes=OAUTH_SCOPES,
+        )
+        flow.redirect_uri = redirect_uri
+        authorization_url, state = flow.authorization_url(
+            access_type="offline",
+            include_granted_scopes="true",
+            prompt="consent",
+        )
+        st.session_state["oauth_state"] = state
+        st.link_button("🔑 Entrar com Google", authorization_url, use_container_width=True)
 
 
 def _section_send_to_sheets(token: str, defaults: dict[str, str]) -> None:
