@@ -26,6 +26,10 @@ from src.transform.normalize_sales import normalize_sales
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ENV_PATH = PROJECT_ROOT / ".env"
+OAUTH_SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive.file",
+]
 
 
 def _is_streamlit_cloud() -> bool:
@@ -42,14 +46,6 @@ def _secret(key: str, fallback: str = "") -> str:
         return fallback
 
 
-IS_CLOUD = _is_streamlit_cloud()
-PUBLIC_MODE = _secret("APP_PUBLIC_MODE", os.getenv("APP_PUBLIC_MODE", "false")).lower() == "true"
-OAUTH_SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive.file",
-]
-
-
 DATASET_EXTRACTORS: dict[str, Callable[[OkttoClient], list[dict]]] = {
     "leads": fetch_leads,
     "sales": fetch_sales,
@@ -61,10 +57,11 @@ DATASET_EXTRACTORS: dict[str, Callable[[OkttoClient], list[dict]]] = {
 
 
 def _load_env_defaults() -> dict[str, str]:
+    is_cloud = _is_streamlit_cloud()
     values = dotenv_values(ENV_PATH)
 
     def _val(key: str, fallback: str = "") -> str:
-        if IS_CLOUD:
+        if is_cloud:
             return _secret(key, str(values.get(key, fallback)))
         return str(values.get(key, fallback))
 
@@ -81,7 +78,7 @@ def _load_env_defaults() -> dict[str, str]:
 
 
 def _save_env(updates: dict[str, str]) -> None:
-    if IS_CLOUD:
+    if _is_streamlit_cloud():
         st.warning("No Streamlit Cloud, configuracoes devem ser definidas em Settings > Secrets.")
         return
     ENV_PATH.touch(exist_ok=True)
@@ -387,9 +384,10 @@ def main() -> None:
     st.title("Oktto Pipeline - Painel Simples")
     st.caption("Modo admin para pipeline completo e modo publico para extracao por token individual.")
 
+    is_public = _secret("APP_PUBLIC_MODE", os.getenv("APP_PUBLIC_MODE", "false")).lower() == "true"
     defaults = _load_env_defaults()
 
-    if PUBLIC_MODE:
+    if is_public:
         _public_panel(defaults)
     else:
         tab_admin, tab_public = st.tabs(["Admin", "Publico"])
