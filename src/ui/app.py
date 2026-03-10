@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import pandas as pd
 import streamlit as st
-from google.oauth2.credentials import Credentials as UserCredentials
-from google_auth_oauthlib.flow import Flow
+
+try:
+    from google.oauth2.credentials import Credentials as UserCredentials
+    from google_auth_oauthlib.flow import Flow
+except ImportError:
+    UserCredentials = Any
+    Flow = None
 
 try:
     from dotenv import dotenv_values, set_key
@@ -37,6 +42,18 @@ OAUTH_SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive.file",
 ]
+
+
+def _google_oauth_available() -> bool:
+    return Flow is not None
+
+
+def _require_google_oauth() -> None:
+    if not _google_oauth_available():
+        raise RuntimeError(
+            "OAuth Google indisponivel neste deploy. "
+            "Verifique a instalacao de google-auth e google-auth-oauthlib."
+        )
 
 
 def _is_streamlit_cloud() -> bool:
@@ -155,6 +172,7 @@ def _oauth_client_config(client_id: str, client_secret: str, redirect_uri: str) 
 
 
 def _make_user_credentials(payload: dict) -> UserCredentials:
+    _require_google_oauth()
     return UserCredentials(
         token=payload.get("token"),
         refresh_token=payload.get("refresh_token"),
@@ -167,6 +185,10 @@ def _make_user_credentials(payload: dict) -> UserCredentials:
 
 def _oauth_login_panel(defaults: dict[str, str]) -> None:
     st.markdown("#### Login Google (OAuth)")
+
+    if not _google_oauth_available():
+        st.warning("Login Google indisponivel neste deploy. O modo de extracao CSV continua funcionando.")
+        return
 
     client_id = st.text_input(
         "Google OAuth Client ID",
@@ -244,6 +266,7 @@ def _run_public_job_to_user_sheets(
     oktto_token: str,
     spreadsheet_id: str,
 ) -> None:
+    _require_google_oauth()
     creds_payload = st.session_state.get("google_user_creds")
     if not creds_payload:
         raise RuntimeError("Faca login Google antes de executar o job.")

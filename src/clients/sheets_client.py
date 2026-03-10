@@ -1,14 +1,31 @@
 from __future__ import annotations
 
-from typing import List
+from typing import Any, List
 
-import gspread
 import pandas as pd
-from google.oauth2.credentials import Credentials as UserCredentials
-from google.oauth2.service_account import Credentials
+
+try:
+    import gspread
+except ImportError:
+    gspread = None
+
+try:
+    from google.oauth2.credentials import Credentials as UserCredentials
+    from google.oauth2.service_account import Credentials
+except ImportError:
+    UserCredentials = Any
+    Credentials = None
 
 from src.config import SheetsSettings
 from src.utils.logger import get_logger
+
+
+def _ensure_google_dependencies() -> None:
+    if gspread is None or Credentials is None:
+        raise RuntimeError(
+            "Dependencias Google indisponiveis no ambiente. "
+            "Verifique a instalacao de gspread e google-auth no deploy."
+        )
 
 
 class SheetsClient:
@@ -19,6 +36,7 @@ class SheetsClient:
 
     def __init__(self, settings: SheetsSettings) -> None:
         self.logger = get_logger(self.__class__.__name__)
+        _ensure_google_dependencies()
         credentials = Credentials.from_service_account_file(
             settings.credentials_json,
             scopes=self.SCOPES,
@@ -44,6 +62,7 @@ class SheetsClient:
 class SheetsClientOAuth:
     def __init__(self, spreadsheet_id: str, credentials: UserCredentials) -> None:
         self.logger = get_logger(self.__class__.__name__)
+        _ensure_google_dependencies()
         self.gc = gspread.authorize(credentials)
         self.spreadsheet = self.gc.open_by_key(spreadsheet_id)
 
