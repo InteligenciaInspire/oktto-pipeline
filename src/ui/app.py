@@ -6,9 +6,16 @@ from typing import Callable
 
 import pandas as pd
 import streamlit as st
-from dotenv import dotenv_values, set_key
 from google.oauth2.credentials import Credentials as UserCredentials
 from google_auth_oauthlib.flow import Flow
+
+try:
+    from dotenv import dotenv_values, set_key
+except ImportError:
+    def dotenv_values(path):
+        return {}
+    def set_key(path, key, value):
+        pass
 
 from src.clients.oktto_client import OkttoClient
 from src.clients.sheets_client import SheetsClient, SheetsClientOAuth
