@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import os
 from typing import Any, Callable
 
 import pandas as pd
 import streamlit as st
+
+# Required: Streamlit Cloud routes through an HTTP proxy internally.
+# Without this, oauthlib rejects the token exchange with InsecureTransportError.
+os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
 
 try:
     from google.oauth2.credentials import Credentials as UserCredentials
@@ -251,17 +256,21 @@ def _oauth_login_panel(defaults: dict[str, str]) -> None:
     code = st.query_params.get("code")
     state_in_url = st.query_params.get("state")
 
-    # Handle OAuth callback: exchange code exactly once
+    # Handle OAuth callback: exchange code exactly once.
+    # IMPORTANT: clear query params FIRST so Streamlit does not re-run this
+    # block with the same code on subsequent renders (which causes invalid_grant).
     if code and not st.session_state.get("oauth_code_used"):
         st.session_state["oauth_code_used"] = True
+        saved_code = code
+        saved_state = state_in_url or st.session_state.get("oauth_state", "")
+        st.query_params.clear()  # clear URL before any network call
         try:
             flow = Flow.from_client_config(
                 _oauth_client_config(client_id, client_secret, redirect_uri),
                 scopes=OAUTH_SCOPES,
-                state=st.session_state.get("oauth_state") or state_in_url,
             )
             flow.redirect_uri = redirect_uri
-            flow.fetch_token(code=code)
+            flow.fetch_token(code=saved_code)
             creds = flow.credentials
             st.session_state["google_user_creds"] = {
                 "token": creds.token,
@@ -271,12 +280,10 @@ def _oauth_login_panel(defaults: dict[str, str]) -> None:
                 "client_secret": creds.client_secret,
                 "scopes": list(creds.scopes) if creds.scopes else [],
             }
-            st.query_params.clear()
             st.rerun()
         except Exception as exc:
             st.session_state.pop("oauth_code_used", None)
-            st.query_params.clear()
-            st.error(f"Falha no login Google: {exc}. Tente novamente.")
+            st.error(f"Falha no login Google: {exc}. Clique em 'Entrar com Google' para tentar novamente.")
         return
 
     # Show login button (only when no pending code in URL)
