@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-from pathlib import Path
 from typing import Any, Callable
 
 import pandas as pd
@@ -14,30 +12,21 @@ except ImportError:
     UserCredentials = Any
     Flow = None
 
-try:
-    from dotenv import dotenv_values, set_key
-except ImportError:
-    def dotenv_values(path):
-        return {}
-    def set_key(path, key, value):
-        pass
-
 from src.clients.oktto_client import OkttoClient
-from src.clients.sheets_client import SheetsClient, SheetsClientOAuth
-from src.config import OkttoSettings, SheetsSettings
+from src.clients.sheets_client import SheetsClientOAuth
+from src.config import OkttoSettings
 from src.extract.additional_fields import fetch_additional_fields
 from src.extract.funnels import fetch_funnels
 from src.extract.leads import fetch_leads
 from src.extract.sales import fetch_sales
 from src.extract.teams import fetch_teams
 from src.extract.users import fetch_users
-from src.main import JOBS, run_job, run_job_with_clients
+from src.main import JOBS, run_job_with_clients
 from src.transform.normalize_leads import normalize_leads
 from src.transform.normalize_sales import normalize_sales
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-ENV_PATH = PROJECT_ROOT / ".env"
+PROJECT_ROOT = None  # not used in cloud mode
 OAUTH_SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive.file",
@@ -55,12 +44,6 @@ def _require_google_oauth() -> None:
             "Verifique a instalacao de google-auth e google-auth-oauthlib."
         )
 
-
-def _is_streamlit_cloud() -> bool:
-    try:
-        return bool(st.secrets.get("APP_PUBLIC_MODE"))
-    except Exception:
-        return False
 
 
 def _secret(key: str, fallback: str = "") -> str:
@@ -81,72 +64,16 @@ DATASET_EXTRACTORS: dict[str, Callable[[OkttoClient], list[dict]]] = {
 
 
 def _load_env_defaults() -> dict[str, str]:
-    is_cloud = _is_streamlit_cloud()
-    values = dotenv_values(ENV_PATH)
-
     def _val(key: str, fallback: str = "") -> str:
-        if is_cloud:
-            return _secret(key, str(values.get(key, fallback)))
-        return str(values.get(key, fallback))
+        return _secret(key, fallback)
 
     return {
         "OKTTO_API_BASE_URL": _val("OKTTO_API_BASE_URL", "https://api.oktto.com.br/v1"),
-        "OKTTO_API_TOKEN": _val("OKTTO_API_TOKEN"),
-        "GOOGLE_SHEETS_SPREADSHEET_ID": _val("GOOGLE_SHEETS_SPREADSHEET_ID"),
-        "GOOGLE_SHEETS_CREDENTIALS_JSON": _val("GOOGLE_SHEETS_CREDENTIALS_JSON"),
         "GOOGLE_OAUTH_CLIENT_ID": _val("GOOGLE_OAUTH_CLIENT_ID"),
         "GOOGLE_OAUTH_CLIENT_SECRET": _val("GOOGLE_OAUTH_CLIENT_SECRET"),
         "GOOGLE_OAUTH_REDIRECT_URI": _val("GOOGLE_OAUTH_REDIRECT_URI"),
-        "LOG_LEVEL": _val("LOG_LEVEL", "INFO"),
     }
 
-
-def _save_env(updates: dict[str, str]) -> None:
-    if _is_streamlit_cloud():
-        st.warning("No Streamlit Cloud, configuracoes devem ser definidas em Settings > Secrets.")
-        return
-    ENV_PATH.touch(exist_ok=True)
-    for key, value in updates.items():
-        set_key(str(ENV_PATH), key, value)
-        os.environ[key] = value
-
-
-def _test_oktto_connection(base_url: str, token: str) -> tuple[bool, str]:
-    if not token:
-        return False, "Informe o token da Oktto."
-
-    try:
-        client = OkttoClient(
-            OkttoSettings(
-                base_url=base_url,
-                token=token,
-            )
-        )
-        payload = client.get("/permissions")
-        count = len(payload) if isinstance(payload, list) else len(payload.keys()) if isinstance(payload, dict) else 0
-        return True, f"Conexao OK. Resposta recebida em /permissions (itens: {count})."
-    except Exception as exc:
-        return False, f"Falha ao conectar na Oktto: {exc}"
-
-
-def _test_sheets_connection(spreadsheet_id: str, credentials_json: str) -> tuple[bool, str]:
-    if not spreadsheet_id or not credentials_json:
-        return False, "Informe spreadsheet_id e caminho do JSON de credenciais."
-
-    if not Path(credentials_json).exists():
-        return False, "Arquivo de credenciais nao encontrado no caminho informado."
-
-    try:
-        client = SheetsClient(
-            SheetsSettings(
-                spreadsheet_id=spreadsheet_id,
-                credentials_json=credentials_json,
-            )
-        )
-        worksheet_count = len(client.spreadsheet.worksheets())
-        return True, f"Conexao OK com Google Sheets. Abas encontradas: {worksheet_count}."
-    except Exception as exc:
-        return False, f"Falha ao conectar no Google Sheets: {exc}"
 
 
 def _normalize_dataset(dataset: str, items: list[dict]) -> pd.DataFrame:
@@ -284,107 +211,76 @@ def _public_extract(dataset: str, base_url: str, token: str, page_size: int) -> 
     return _normalize_dataset(dataset, items)
 
 
-def _admin_panel(defaults: dict[str, str]) -> None:
-    with st.form("config_form"):
-        st.subheader("Configuracao")
-        oktto_base_url = st.text_input("Oktto Base URL", value=defaults["OKTTO_API_BASE_URL"])
-        oktto_token = st.text_input("Oktto Token", value=defaults["OKTTO_API_TOKEN"], type="password")
-        spreadsheet_id = st.text_input("Google Spreadsheet ID", value=defaults["GOOGLE_SHEETS_SPREADSHEET_ID"])
-        credentials_json = st.text_input(
-            "Caminho do JSON de credenciais",
-            value=defaults["GOOGLE_SHEETS_CREDENTIALS_JSON"],
-            help="Exemplo: credentials/google-service-account.json",
+def _how_it_works() -> None:
+    with st.expander("Como funciona?", expanded=False):
+        st.markdown(
+            """
+**O que e este app?**
+
+Conecta sua conta da **Oktto CRM** e extrai dados comerciais — leads, vendas, usuarios, funis e mais.
+Voce pode baixar os dados como **CSV** ou enviar diretamente para o seu **Google Sheets**.
+
+---
+
+**O que voce precisa?**
+
+- **Token da Oktto** — encontrado em _Configuracoes > Integracoes > API_ dentro da sua conta Oktto.
+- **Spreadsheet ID** (opcional, so para enviar ao Sheets) — e o trecho da URL da planilha entre `/d/` e `/edit`. Exemplo:
+  `https://docs.google.com/spreadsheets/d/**SEU_ID_AQUI**/edit`
+
+---
+
+**Opcao 1 — Baixar CSV**
+
+1. Informe seu token da Oktto
+2. Escolha o dataset (leads, vendas, usuarios...)
+3. Clique em **Extrair** e depois em **Baixar CSV**
+
+---
+
+**Opcao 2 — Enviar para Google Sheets**
+
+1. Faca login com sua conta Google (botao abaixo)
+2. Informe seu token da Oktto e o ID da planilha de destino
+3. Escolha o job e clique em **Executar e enviar para Sheets**
+
+Os dados serao escritos em abas separadas dentro da sua planilha.
+Nenhum token ou dado seu e salvo neste servidor.
+
+---
+
+**Jobs disponiveis**
+
+| Job | O que faz |
+|---|---|
+| `sync_dimensions` | Funis, etapas, usuarios, equipes e campos adicionais |
+| `sync_leads` | Todos os leads com campos normalizados |
+| `sync_sales` | Todas as vendas com campos normalizados |
+| `sync_full` | Tudo acima + view comercial resumida |
+"""
         )
-        log_options = ["DEBUG", "INFO", "WARNING", "ERROR"]
-        default_log_index = log_options.index(defaults["LOG_LEVEL"]) if defaults["LOG_LEVEL"] in log_options else 1
-        log_level = st.selectbox("Log level", options=log_options, index=default_log_index)
-
-        save = st.form_submit_button("Salvar configuracoes")
-        if save:
-            _save_env(
-                {
-                    "OKTTO_API_BASE_URL": oktto_base_url.strip(),
-                    "OKTTO_API_TOKEN": oktto_token.strip(),
-                    "GOOGLE_SHEETS_SPREADSHEET_ID": spreadsheet_id.strip(),
-                    "GOOGLE_SHEETS_CREDENTIALS_JSON": credentials_json.strip(),
-                    "LOG_LEVEL": log_level,
-                }
-            )
-            st.success("Configuracoes salvas no .env")
-
-    st.subheader("Testes de conexao")
-    col1, col2 = st.columns(2)
-
-    with col1:
-        if st.button("Testar Oktto", use_container_width=True):
-            ok, message = _test_oktto_connection(oktto_base_url.strip(), oktto_token.strip())
-            if ok:
-                st.success(message)
-            else:
-                st.error(message)
-
-    with col2:
-        if st.button("Testar Google Sheets", use_container_width=True):
-            ok, message = _test_sheets_connection(spreadsheet_id.strip(), credentials_json.strip())
-            if ok:
-                st.success(message)
-            else:
-                st.error(message)
-
-    st.subheader("Executar jobs")
-    selected_job = st.selectbox("Escolha o job", options=list(JOBS.keys()), index=0)
-
-    if st.button("Executar job", type="primary", use_container_width=True):
-        try:
-            run_job(selected_job)
-            st.success(f"Job {selected_job} executado com sucesso.")
-        except Exception as exc:
-            st.error(f"Falha ao executar job {selected_job}: {exc}")
 
 
-def _public_panel(defaults: dict[str, str]) -> None:
-    st.subheader("Extracao publica (token por usuario)")
-    st.info(
-        "Cada usuario informa o proprio token da Oktto e pode extrair CSV ou enviar para o proprio Google Sheets via login Google. "
-        "Nenhum token da Oktto e salvo no servidor."
-    )
+def _section_extract_csv(defaults: dict[str, str]) -> None:
+    st.subheader("Extrair dados para CSV")
 
-    _oauth_login_panel(defaults)
-
-    with st.form("public_sheets_form"):
-        st.markdown("#### Enviar para Google Sheets")
-        oktto_base_url_sheets = st.text_input("Oktto Base URL", value=defaults["OKTTO_API_BASE_URL"], key="public_o_base")
-        oktto_token_sheets = st.text_input("Seu token Oktto", type="password", key="public_o_token")
-        spreadsheet_id = st.text_input("Spreadsheet ID de destino", key="public_sheet_id")
-        selected_job = st.selectbox("Job", options=list(JOBS.keys()), index=0, key="public_job")
-        send = st.form_submit_button("Executar e enviar para Sheets")
-
-    if send:
-        if not oktto_token_sheets.strip():
-            st.error("Informe seu token Oktto.")
-        elif not spreadsheet_id.strip():
-            st.error("Informe o Spreadsheet ID.")
-        else:
-            try:
-                with st.spinner("Executando job e escrevendo no Sheets..."):
-                    _run_public_job_to_user_sheets(
-                        job_name=selected_job,
-                        oktto_base_url=oktto_base_url_sheets.strip(),
-                        oktto_token=oktto_token_sheets.strip(),
-                        spreadsheet_id=spreadsheet_id.strip(),
-                    )
-                st.success(f"Job {selected_job} executado e enviado para o Sheets informado.")
-            except Exception as exc:
-                st.error(f"Falha ao enviar para Sheets: {exc}")
-
-    st.divider()
-
-    with st.form("public_extract_form"):
+    with st.form("extract_form"):
         base_url = st.text_input("Oktto Base URL", value=defaults["OKTTO_API_BASE_URL"])
-        token = st.text_input("Seu token Oktto", type="password")
-        dataset = st.selectbox("Dataset", options=list(DATASET_EXTRACTORS.keys()), index=0)
+        token = st.text_input("Token da Oktto", type="password", help="Configuracoes > Integracoes > API na sua conta Oktto")
+        dataset = st.selectbox(
+            "Dataset",
+            options=list(DATASET_EXTRACTORS.keys()),
+            format_func=lambda x: {
+                "leads": "Leads",
+                "sales": "Vendas",
+                "users": "Usuarios",
+                "teams": "Equipes",
+                "funnels": "Funis",
+                "additional_fields": "Campos adicionais",
+            }.get(x, x),
+        )
         page_size = st.number_input("Itens por pagina", min_value=10, max_value=500, value=100, step=10)
-        submit = st.form_submit_button("Extrair")
+        submit = st.form_submit_button("Extrair", use_container_width=True, type="primary")
 
     if submit:
         if not token.strip():
@@ -393,14 +289,11 @@ def _public_panel(defaults: dict[str, str]) -> None:
         try:
             with st.spinner("Extraindo dados..."):
                 df = _public_extract(dataset, base_url.strip(), token.strip(), int(page_size))
-
-            st.success(f"Extracao concluida. Linhas: {len(df)}")
-            st.dataframe(df.head(100), use_container_width=True)
-
-            csv_data = df.to_csv(index=False).encode("utf-8")
+            st.success(f"Extracao concluida — {len(df)} linhas")
+            st.dataframe(df.head(200), use_container_width=True)
             st.download_button(
                 label="Baixar CSV",
-                data=csv_data,
+                data=df.to_csv(index=False).encode("utf-8"),
                 file_name=f"oktto_{dataset}.csv",
                 mime="text/csv",
                 use_container_width=True,
@@ -409,22 +302,72 @@ def _public_panel(defaults: dict[str, str]) -> None:
             st.error(f"Falha na extracao: {exc}")
 
 
-def main() -> None:
-    st.set_page_config(page_title="Oktto Pipeline", layout="centered")
-    st.title("Oktto Pipeline - Painel Simples")
-    st.caption("Modo admin para pipeline completo e modo publico para extracao por token individual.")
+def _section_send_to_sheets(defaults: dict[str, str]) -> None:
+    st.subheader("Enviar para Google Sheets")
 
-    is_public = _secret("APP_PUBLIC_MODE", os.getenv("APP_PUBLIC_MODE", "false")).lower() == "true"
+    _oauth_login_panel(defaults)
+
+    st.divider()
+
+    with st.form("sheets_form"):
+        base_url = st.text_input("Oktto Base URL", value=defaults["OKTTO_API_BASE_URL"], key="sh_base")
+        token = st.text_input("Token da Oktto", type="password", key="sh_token")
+        spreadsheet_id = st.text_input(
+            "Spreadsheet ID de destino",
+            key="sh_id",
+            help="Trecho da URL da planilha entre /d/ e /edit",
+        )
+        job_labels = {
+            "sync_dimensions": "sync_dimensions — funis, etapas, usuarios, equipes",
+            "sync_leads": "sync_leads — leads",
+            "sync_sales": "sync_sales — vendas",
+            "sync_full": "sync_full — tudo + view comercial",
+        }
+        selected_job = st.selectbox(
+            "Job",
+            options=list(JOBS.keys()),
+            format_func=lambda x: job_labels.get(x, x),
+            key="sh_job",
+        )
+        send = st.form_submit_button("Executar e enviar para Sheets", use_container_width=True, type="primary")
+
+    if send:
+        if not token.strip():
+            st.error("Informe seu token Oktto.")
+        elif not spreadsheet_id.strip():
+            st.error("Informe o Spreadsheet ID.")
+        else:
+            try:
+                with st.spinner("Executando job e escrevendo no Sheets..."):
+                    _run_public_job_to_user_sheets(
+                        job_name=selected_job,
+                        oktto_base_url=base_url.strip(),
+                        oktto_token=token.strip(),
+                        spreadsheet_id=spreadsheet_id.strip(),
+                    )
+                st.success(f"Concluido! Job '{selected_job}' enviado para a planilha.")
+            except Exception as exc:
+                st.error(f"Falha: {exc}")
+
+
+def main() -> None:
+    st.set_page_config(page_title="Oktto Pipeline", page_icon="📊", layout="centered")
+    st.title("📊 Oktto Pipeline")
+    st.caption("Extraia dados do seu CRM Oktto — baixe como CSV ou envie direto para o Google Sheets.")
+
+    _how_it_works()
+
     defaults = _load_env_defaults()
 
-    if is_public:
-        _public_panel(defaults)
-    else:
-        tab_admin, tab_public = st.tabs(["Admin", "Publico"])
-        with tab_admin:
-            _admin_panel(defaults)
-        with tab_public:
-            _public_panel(defaults)
+    st.divider()
+
+    tab_csv, tab_sheets = st.tabs(["📥 Extrair CSV", "📤 Enviar para Google Sheets"])
+
+    with tab_csv:
+        _section_extract_csv(defaults)
+
+    with tab_sheets:
+        _section_send_to_sheets(defaults)
 
 
 if __name__ == "__main__":
