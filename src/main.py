@@ -40,7 +40,7 @@ def run_job(job_name: str) -> None:
     run_job_with_clients(job_name, oktto_client, sheets_client)
 
 
-def run_job_with_clients(job_name: str, oktto_client: OkttoClient, sheets_client: SheetsClient) -> None:
+def run_job_with_clients(job_name: str, oktto_client: OkttoClient, sheets_client) -> None:
     if job_name not in JOBS:
         raise ValueError(f"Invalid job: {job_name}")
 

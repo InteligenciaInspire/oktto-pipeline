@@ -76,11 +76,14 @@ def _load_env_defaults() -> dict[str, str]:
         "GOOGLE_OAUTH_CLIENT_ID": _val("GOOGLE_OAUTH_CLIENT_ID"),
         "GOOGLE_OAUTH_CLIENT_SECRET": _val("GOOGLE_OAUTH_CLIENT_SECRET"),
         "GOOGLE_OAUTH_REDIRECT_URI": _val("GOOGLE_OAUTH_REDIRECT_URI"),
-        "LOG_LEVEL": str(values.get("LOG_LEVEL", "INFO")),
+        "LOG_LEVEL": _val("LOG_LEVEL", "INFO"),
     }
 
 
 def _save_env(updates: dict[str, str]) -> None:
+    if IS_CLOUD:
+        st.warning("No Streamlit Cloud, configuracoes devem ser definidas em Settings > Secrets.")
+        return
     ENV_PATH.touch(exist_ok=True)
     for key, value in updates.items():
         set_key(str(ENV_PATH), key, value)
