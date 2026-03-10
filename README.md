@@ -100,9 +100,23 @@ No Streamlit Community Cloud, use:
 
 - Repository: seu repo no GitHub
 - Branch: `main`
-- Main file path: `src/ui/app.py`
+- Main file path: `streamlit_app.py`
+- Advanced settings > Python version: `3.12`
 
 E configure os mesmos valores como secrets da plataforma.
+
+## Troubleshooting Streamlit Cloud
+
+Se o app ficar parado em "Your app is in the oven", valide primeiro o runtime:
+
+- Este repositorio esta pinado e validado em Python `3.12`:
+  - `runtime.txt`
+  - `.python-version`
+  - `.github/workflows/*.yml`
+- Reboot do app nao troca a versao de Python de um deploy ja criado.
+- Se o log mostrar `Using Python 3.14.x`, trate como runtime incorreto para este projeto.
+- Para corrigir, apague o app no Streamlit Community Cloud e crie outro selecionando Python `3.12` em `Advanced settings`.
+- As mensagens `No secrets found` no Codespaces nao impedem o boot da interface; elas so indicam que `secrets.toml` nao foi configurado naquele ambiente.
 
 ## Modo publico para todos usarem
 
